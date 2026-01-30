@@ -1,0 +1,293 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Play, 
+  FileText, 
+  Share2, 
+  AlertCircle, 
+  Loader2, 
+  Download, 
+  Copy,
+  GitBranch,
+  Terminal,
+  Code2,
+  Check
+} from 'lucide-react';
+
+const apiKey = ""; 
+
+const App = () => {
+  const [description, setDescription] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [result, setResult] = useState(null);
+  const [copied, setCopied] = useState(null);
+  const mermaidRef = useRef(null);
+
+  useEffect(() => {
+    const script = document.createElement('script');
+    script.src = "https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js";
+    script.async = true;
+    script.onload = () => {
+      window.mermaid.initialize({
+        startOnLoad: false,
+        theme: 'neutral',
+        securityLevel: 'loose',
+        flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' }
+      });
+    };
+    document.body.appendChild(script);
+  }, []);
+
+  useEffect(() => {
+    if (result?.mermaidCode && window.mermaid) {
+      const renderDiagram = async () => {
+        try {
+          const { svg } = await window.mermaid.render('mermaid-svg-container', result.mermaidCode);
+          if (mermaidRef.current) {
+            mermaidRef.current.innerHTML = svg;
+          }
+        } catch (err) {
+          console.error("Error renderizando Mermaid:", err);
+        }
+      };
+      renderDiagram();
+    }
+  }, [result]);
+
+  const callGeminiAPI = async (prompt, retries = 5, delay = 1000) => {
+    const systemPrompt = `Eres un experto en lógica de programación.
+    Recibe una descripción y devuelve un JSON con:
+    1. "mermaidCode": Diagrama de flujo profesional en sintaxis Mermaid.js.
+    2. "algorithmSteps": Array de strings con la lógica secuencial.
+    3. "pythonCode": Código de Python funcional, bien comentado y con nombres de variables descriptivos.
+    Responde ÚNICAMENTE con el objeto JSON.`;
+
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          generationConfig: { 
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "OBJECT",
+              properties: {
+                mermaidCode: { type: "STRING" },
+                algorithmSteps: { type: "ARRAY", items: { type: "STRING" } },
+                pythonCode: { type: "STRING" }
+              },
+              required: ["mermaidCode", "algorithmSteps", "pythonCode"]
+            }
+          }
+        })
+      });
+
+      if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
+      const data = await response.json();
+      return JSON.parse(data.candidates?.[0]?.content?.parts?.[0]?.text);
+    } catch (err) {
+      if (retries > 0) {
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return callGeminiAPI(prompt, retries - 1, delay * 2);
+      }
+      throw err;
+    }
+  };
+
+  const handleGenerate = async () => {
+    if (!description.trim()) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await callGeminiAPI(description);
+      setResult(data);
+    } catch (err) {
+      setError("Error de conexión con la IA. Inténtalo de nuevo.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyToClipboard = (text, key) => {
+    const el = document.createElement('textarea');
+    el.value = text;
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    document.body.removeChild(el);
+    setCopied(key);
+    setTimeout(() => setCopied(null), 2000);
+  };
+
+  const downloadPNG = () => {
+    const svgElement = mermaidRef.current.querySelector('svg');
+    if (!svgElement) return;
+
+    const svgData = new XMLSerializer().serializeToString(svgElement);
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    const img = new Image();
+    
+    img.onload = () => {
+      // Escalar para mejor calidad
+      const scale = 2;
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      ctx.scale(scale, scale);
+      ctx.fillStyle = "white";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      
+      const pngFile = canvas.toDataURL("image/png");
+      const downloadLink = document.createElement("a");
+      downloadLink.download = "diagrama_flujo.png";
+      downloadLink.href = pngFile;
+      downloadLink.click();
+    };
+
+    img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 text-gray-900 font-sans p-4 md:p-8">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <header className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="bg-indigo-600 p-3 rounded-2xl shadow-lg shadow-indigo-200">
+              <GitBranch className="w-8 h-8 text-white" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-black text-gray-800 tracking-tight">LogicGen</h1>
+              <p className="text-gray-500 font-medium">IA para Arquitectura de Algoritmos</p>
+            </div>
+          </div>
+        </header>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+          {/* Input Area */}
+          <div className="lg:col-span-4 space-y-4">
+            <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100">
+              <label className="block text-sm font-bold mb-3 text-gray-600 uppercase tracking-wider">Descripción del Proceso</label>
+              <textarea 
+                className="w-full h-64 p-5 bg-gray-50 border-2 border-transparent border-gray-100 rounded-2xl focus:bg-white focus:border-indigo-500 outline-none transition-all resize-none text-sm leading-relaxed"
+                placeholder="Ej: Un programa que calcule el promedio de 3 notas y diga si el alumno aprobó (>= 60) o reprobó..."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+              />
+              <button 
+                onClick={handleGenerate}
+                disabled={loading || !description}
+                className={`w-full mt-6 flex items-center justify-center gap-2 py-4 rounded-2xl font-black text-sm uppercase tracking-widest transition-all shadow-xl shadow-indigo-100 ${
+                  loading || !description 
+                  ? 'bg-gray-200 text-gray-400 cursor-not-allowed shadow-none' 
+                  : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-[0.98]'
+                }`}
+              >
+                {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5 fill-current" />}
+                Procesar Algoritmo
+              </button>
+            </div>
+
+            {error && (
+              <div className="flex items-start gap-3 p-4 bg-red-50 border-l-4 border-red-500 text-red-700 rounded-r-xl animate-shake">
+                <AlertCircle className="w-5 h-5 flex-shrink-0" />
+                <p className="text-sm font-medium">{error}</p>
+              </div>
+            )}
+          </div>
+
+          {/* Result Area */}
+          <div className="lg:col-span-8 space-y-8">
+            {!result && !loading && (
+              <div className="bg-white h-full min-h-[500px] flex flex-col items-center justify-center text-gray-300 border-2 border-dashed border-gray-200 rounded-3xl">
+                <Terminal className="w-20 h-20 mb-4 opacity-10" />
+                <p className="font-bold text-lg">Esperando instrucciones...</p>
+              </div>
+            )}
+
+            {loading && (
+              <div className="bg-white h-full min-h-[500px] flex flex-col items-center justify-center text-gray-600 rounded-3xl shadow-sm border border-gray-100">
+                <div className="relative">
+                  <div className="w-20 h-20 border-4 border-indigo-100 border-t-indigo-600 rounded-full animate-spin"></div>
+                  <GitBranch className="w-8 h-8 text-indigo-600 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+                </div>
+                <p className="mt-6 font-bold text-indigo-900 animate-pulse">Generando diagramas y código...</p>
+              </div>
+            )}
+
+            {result && !loading && (
+              <div className="space-y-8">
+                {/* 1. Flowchart Card */}
+                <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+                  <div className="px-8 py-5 border-b border-gray-50 flex items-center justify-between bg-gray-50/50">
+                    <h2 className="font-black text-gray-700 flex items-center gap-3 text-xs uppercase tracking-[0.2em]">
+                      <GitBranch className="w-5 h-5 text-indigo-500" /> Diagrama de Flujo
+                    </h2>
+                    <div className="flex gap-2">
+                       <button 
+                        onClick={downloadPNG}
+                        className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 rounded-xl text-xs font-bold hover:bg-indigo-100 transition-colors"
+                      >
+                        <Download className="w-4 h-4" /> PNG
+                      </button>
+                    </div>
+                  </div>
+                  <div className="p-8 flex justify-center bg-white" ref={mermaidRef}></div>
+                </div>
+
+                {/* 2. Algorithm & Python Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  {/* Algorithm Steps */}
+                  <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden flex flex-col">
+                    <div className="px-8 py-5 border-b border-gray-50 bg-gray-50/50">
+                      <h2 className="font-black text-gray-700 flex items-center gap-3 text-xs uppercase tracking-[0.2em]">
+                        <FileText className="w-5 h-5 text-indigo-500" /> Lógica Paso a Paso
+                      </h2>
+                    </div>
+                    <div className="p-8 flex-1">
+                      <div className="space-y-4">
+                        {result.algorithmSteps.map((step, idx) => (
+                          <div key={idx} className="flex items-start gap-4">
+                            <span className="flex-shrink-0 w-6 h-6 bg-gray-100 text-gray-500 rounded-lg flex items-center justify-center font-bold text-[10px]">
+                              {String(idx + 1).padStart(2, '0')}
+                            </span>
+                            <p className="text-gray-600 text-sm leading-relaxed">{step}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Python Code */}
+                  <div className="bg-slate-900 rounded-3xl shadow-2xl overflow-hidden flex flex-col">
+                    <div className="px-8 py-5 border-b border-slate-800 flex items-center justify-between">
+                      <h2 className="font-black text-slate-400 flex items-center gap-3 text-xs uppercase tracking-[0.2em]">
+                        <Code2 className="w-5 h-5 text-emerald-500" /> Script Python
+                      </h2>
+                      <button 
+                        onClick={() => copyToClipboard(result.pythonCode, 'py')}
+                        className="text-slate-400 hover:text-white transition-colors"
+                      >
+                        {copied === 'py' ? <Check className="w-5 h-5 text-emerald-500" /> : <Copy className="w-5 h-5" />}
+                      </button>
+                    </div>
+                    <div className="p-6 flex-1 font-mono text-sm overflow-auto">
+                      <pre className="text-emerald-400">
+                        <code>{result.pythonCode}</code>
+                      </pre>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default App;
